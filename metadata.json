@@ -1,0 +1,6 @@
+{
+  "name": "OnDeviceML",
+  "description": "On-Device ML Fine-Tuning Studio & Backend Selector for edge LLMs and mobile neural networks",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
