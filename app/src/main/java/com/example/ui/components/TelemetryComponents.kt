@@ -74,6 +74,8 @@ fun TelemetryTopBar(
     isCharging: Boolean,
     thermalTempC: Float,
     status: EngineTrainingStatus,
+    deviceDisplayName: String = "My Device",
+    tierLabel: String = "TIER A",
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -126,7 +128,7 @@ fun TelemetryTopBar(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "QVAC 2026",
+                    text = tierLabel,
                     color = NeonCyan,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,

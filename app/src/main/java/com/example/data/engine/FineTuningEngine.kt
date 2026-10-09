@@ -41,8 +41,34 @@ class FineTuningEngine(
     private val _checkpoints = MutableStateFlow<List<CheckpointItem>>(emptyList())
     val checkpoints: StateFlow<List<CheckpointItem>> = _checkpoints.asStateFlow()
 
+    private val _activeDatasetName = MutableStateFlow("iamtarun/python_code_instructions_18k_alpaca")
+    val activeDatasetName: StateFlow<String> = _activeDatasetName.asStateFlow()
+
+    private val _activeModelRepo = MutableStateFlow("1bitLLM/bitnet_b1_58-1B")
+    val activeModelRepo: StateFlow<String> = _activeModelRepo.asStateFlow()
+
     private var trainingJob: Job? = null
     private val epochDurations = mutableListOf<Long>()
+
+    fun loadHuggingFaceDataset(dataset: com.example.data.huggingface.HFDatasetEntry) {
+        _activeDatasetName.value = "${dataset.repoId} (${dataset.tokenCount} tokens)"
+        _hyperparams.update {
+            it.copy(totalDatasetTokens = dataset.tokenCount, documentCount = dataset.docCount)
+        }
+        _sessionState.update {
+            it.copy(statusMessage = "Imported Hugging Face dataset: ${dataset.repoId} (${dataset.tokenCount} tokens)")
+        }
+    }
+
+    fun loadHuggingFaceModel(model: com.example.data.huggingface.HFModelEntry) {
+        _activeModelRepo.value = model.repoId
+        _hyperparams.update {
+            it.copy(modelScale = model.scale, quantFormat = model.quantFormat)
+        }
+        _sessionState.update {
+            it.copy(statusMessage = "Imported Hugging Face model: ${model.repoId}")
+        }
+    }
 
     init {
         updateBatteryInfo()

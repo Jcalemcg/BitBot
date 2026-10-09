@@ -20,23 +20,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeviceThermostat
 import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
@@ -46,13 +40,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -62,10 +56,9 @@ import com.example.data.engine.DatasetValidator
 import com.example.data.engine.FineTuningEngine
 import com.example.data.model.CheckpointItem
 import com.example.data.model.EngineTrainingStatus
-import com.example.data.model.LoRAHyperparams
-import com.example.data.model.ModelScale
-import com.example.data.model.QuantFormat
+import com.example.ui.components.InlineExplainToggle
 import com.example.ui.components.LossChartCanvas
+import com.example.ui.components.SmartPresetSlider
 import com.example.ui.theme.AlertCrimson
 import com.example.ui.theme.CyberBackground
 import com.example.ui.theme.CyberCardBorder
@@ -88,16 +81,19 @@ fun BitNetStudioScreen(
     val sessionState by engine.sessionState.collectAsState()
     val hyperparams by engine.hyperparams.collectAsState()
     val checkpoints by engine.checkpoints.collectAsState()
+    val activeModelRepo by engine.activeModelRepo.collectAsState()
+    val activeDatasetName by engine.activeDatasetName.collectAsState()
 
+    var smartPresetLevel by remember { mutableIntStateOf(3) }
     var showConfigPanel by remember { mutableStateOf(false) }
     var selectedDatasetIndex by remember { mutableStateOf(0) }
     var showEvalInspector by remember { mutableStateOf(false) }
 
     val currentDataset = DatasetValidator.SAMPLE_DATASETS[selectedDatasetIndex]
-    val datasetInspection = remember(selectedDatasetIndex) {
+    val datasetInspection = remember(selectedDatasetIndex, activeDatasetName) {
         DatasetValidator.validateDataset(
-            docCount = currentDataset.second.second,
-            totalTokens = currentDataset.second.first
+            docCount = hyperparams.documentCount,
+            totalTokens = hyperparams.totalDatasetTokens
         )
     }
 
@@ -124,9 +120,10 @@ fun BitNetStudioScreen(
                     letterSpacing = 1.2.sp
                 )
                 Text(
-                    text = "QVAC Fabric on Adreno 830 GPU · Frozen Ternary Base",
-                    fontSize = 12.sp,
-                    color = TextSecondary
+                    text = "Model: $activeModelRepo · QVAC GPU Engine",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = NeonCyanLight
                 )
             }
 
@@ -147,7 +144,7 @@ fun BitNetStudioScreen(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (showConfigPanel) "HIDE HYPERPARAMS" else "HYPERPARAMS",
+                        text = if (showConfigPanel) "HIDE ADVANCED" else "ADVANCED TUNING",
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -159,7 +156,18 @@ fun BitNetStudioScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Hyperparameter Tuning Panel (Collapsible)
+        // 1. SMART PRESET SLIDER (FOR EVERYONE INCLUDING ZERO KNOWLEDGE)
+        SmartPresetSlider(
+            currentLevel = smartPresetLevel,
+            onLevelChanged = { preset ->
+                smartPresetLevel = preset.level
+                engine.updateHyperparams(preset.hyperparams)
+            }
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 2. ADVANCED HYPERPARAMETER TUNING PANEL (Collapsible with inline explanations)
         AnimatedVisibility(visible = showConfigPanel) {
             Column(
                 modifier = Modifier
@@ -170,7 +178,7 @@ fun BitNetStudioScreen(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = "LORA HYPERPARAMETERS (DEFAULTS: RANK 8, ALPHA 16, TQ2_0)",
+                    text = "DETAILED HYPERPARAMETERS (WITH INLINE EXPLANATIONS)",
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -207,8 +215,9 @@ fun BitNetStudioScreen(
                         }
                     }
                 }
+                InlineExplainToggle(conceptKey = "LORA_RANK", modifier = Modifier.padding(top = 4.dp))
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Alpha selector
                 Row(
@@ -238,8 +247,9 @@ fun BitNetStudioScreen(
                         }
                     }
                 }
+                InlineExplainToggle(conceptKey = "LORA_ALPHA", modifier = Modifier.padding(top = 4.dp))
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Batch Size selector
                 Row(
@@ -269,8 +279,9 @@ fun BitNetStudioScreen(
                         }
                     }
                 }
+                InlineExplainToggle(conceptKey = "BATCH_SIZE", modifier = Modifier.padding(top = 4.dp))
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // Dynamic GPU Tiling toggle
                 Row(
@@ -296,7 +307,7 @@ fun BitNetStudioScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Dataset Quality Gate Card
+        // 3. DATASET QUALITY GATE CARD
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -423,11 +434,14 @@ fun BitNetStudioScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            InlineExplainToggle(conceptKey = "DATASET_CAP")
         }
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Live Training Telemetry Status Banner
+        // 4. LIVE TELEMETRY STATUS BANNER
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -466,7 +480,6 @@ fun BitNetStudioScreen(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Step Progress Bar
             val stepFraction = if (sessionState.totalStepsPerEpoch > 0) {
                 sessionState.currentStep.toFloat() / sessionState.totalStepsPerEpoch
             } else 0f
@@ -517,15 +530,16 @@ fun BitNetStudioScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Live Loss Chart
+        // 5. LIVE LOSS CHART & EXPLANATION
         LossChartCanvas(
             lossHistory = sessionState.lossHistory,
             currentLoss = sessionState.currentLoss
         )
+        InlineExplainToggle(conceptKey = "LOSS_METRIC", modifier = Modifier.padding(top = 4.dp))
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Primary Interactive Training Controls
+        // 6. PRIMARY INTERACTIVE CONTROLS
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -589,7 +603,6 @@ fun BitNetStudioScreen(
                 }
             }
 
-            // Save Checkpoint Action
             OutlinedButton(
                 onClick = { engine.saveCheckpoint() },
                 modifier = Modifier.testTag("save_checkpoint_button"),
@@ -598,18 +611,17 @@ fun BitNetStudioScreen(
             ) {
                 Icon(imageVector = Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(text = "CKPT", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                Text(text = "SAVE CKPT", fontSize = 11.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
             }
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Simulation Safeguards Triggers (Testing & Verification)
+        // 7. SIMULATION TRIGGERS FOR BATTERY & THERMAL WITH EXPLANATIONS
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Thermal Throttling trigger
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -627,7 +639,6 @@ fun BitNetStudioScreen(
                 }
             }
 
-            // Battery Guard trigger
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -635,7 +646,6 @@ fun BitNetStudioScreen(
                     .background(CyberDark)
                     .border(1.dp, AlertCrimson.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                     .clickable {
-                        // Simulate dropping to 24% (< 30% threshold)
                         val isLow = sessionState.batteryPct < 30
                         engine.simulateBatteryLevel(if (isLow) 85 else 24, charging = false)
                     }
@@ -655,10 +665,21 @@ fun BitNetStudioScreen(
                 }
             }
         }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                InlineExplainToggle(conceptKey = "THERMAL_COOLDOWN")
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                InlineExplainToggle(conceptKey = "BATTERY_GUARD")
+            }
+        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Checkpoints Section
+        // 8. CHECKPOINTS LIST
         if (checkpoints.isNotEmpty()) {
             Text(
                 text = "SAVED CHECKPOINTS (${checkpoints.size})",
@@ -718,7 +739,7 @@ fun BitNetStudioScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // Eval & Quality Comparison Section
+        // 9. EVAL QUALITY CHECK INSPECTOR
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -747,6 +768,7 @@ fun BitNetStudioScreen(
                 )
             }
         }
+        InlineExplainToggle(conceptKey = "PERPLEXITY_METRIC", modifier = Modifier.padding(top = 4.dp))
 
         Spacer(modifier = Modifier.height(6.dp))
 

@@ -2,9 +2,9 @@ package com.example.data.engine
 
 import com.example.data.model.ModelScale
 import com.example.data.model.QuantFormat
-import com.example.data.model.TargetChipset
 import com.example.data.model.TrainingPathId
-import com.example.data.repository.BenchmarkData
+import com.example.data.scanner.DeviceHardwareProfile
+import com.example.data.scanner.DeviceTier
 
 enum class OomRisk {
     SAFE,
@@ -20,6 +20,8 @@ data class BackendRecommendation(
     val timePerEpochSeconds: Long?,
     val estimatedVramGb: Float,
     val oomRisk: OomRisk,
+    val isLocked: Boolean,
+    val lockReason: String?,
     val feasibilityScorePct: Int,
     val isSweetSpot: Boolean,
     val warnings: List<String>,
@@ -32,112 +34,115 @@ object BackendSelectorEngine {
     fun evaluate(
         modelScale: ModelScale,
         quantFormat: QuantFormat,
-        chipset: TargetChipset,
+        deviceProfile: DeviceHardwareProfile,
         isCustomClassifier: Boolean = false,
         requiresCloudPeft: Boolean = false
     ): BackendRecommendation {
         if (isCustomClassifier) {
-            val path = if (chipset == TargetChipset.IPHONE_16_A18) TrainingPathId.PATH_C else TrainingPathId.PATH_B
             return BackendRecommendation(
-                recommendedPath = path,
-                pathTitle = if (path == TrainingPathId.PATH_B) "Path B: LiteRT Signature Training" else "Path C: Core ML MLUpdateTask",
-                timePerEpochDisplay = "< 45 seconds",
-                timePerEpochSeconds = 45L,
+                recommendedPath = TrainingPathId.PATH_B,
+                pathTitle = "Path B: LiteRT Signature Training",
+                timePerEpochDisplay = "< 30 seconds on ${deviceProfile.deviceModel}",
+                timePerEpochSeconds = 30L,
                 estimatedVramGb = 0.05f,
                 oomRisk = OomRisk.SAFE,
-                feasibilityScorePct = 98,
+                isLocked = false,
+                lockReason = null,
+                feasibilityScorePct = 99,
                 isSweetSpot = true,
-                warnings = if (path == TrainingPathId.PATH_C) listOf(
-                    "Format Constraint: Model MUST be 'neuralnetwork' format. 'mlprogram' cannot be trained on-device."
-                ) else listOf(
-                    "Limited to small models (≤ ~1M parameters). No LoRA support."
+                warnings = listOf(
+                    "Designed for models measured in kilobytes-to-megabytes (≤ ~1M params). No LLM LoRA support."
                 ),
-                highlights = listOf("Zero GPU thermal pressure", "Fast local CPU adaptation"),
+                highlights = listOf(
+                    "Zero graphics pressure on ${deviceProfile.deviceModel}",
+                    "Runs directly on CPU cores (${deviceProfile.cpuCores} active cores)"
+                ),
                 recipeSnippet = "Interpreter.runSignature(inputs, \"train\")"
             )
         }
 
-        if (requiresCloudPeft || modelScale == ModelScale.SCALE_13B) {
+        if (requiresCloudPeft) {
             return BackendRecommendation(
                 recommendedPath = TrainingPathId.PATH_D,
                 pathTitle = "Path D: Off-Device PEFT → On-Device Adapter",
-                timePerEpochDisplay = "~15 min (Cloud H100) / On-device loading: 2.1s",
-                timePerEpochSeconds = 900L,
-                estimatedVramGb = 0.8f,
+                timePerEpochDisplay = "~12 min (Cloud) / On-device load: 1.8s",
+                timePerEpochSeconds = 720L,
+                estimatedVramGb = 0.6f,
                 oomRisk = OomRisk.SAFE,
-                feasibilityScorePct = 92,
+                isLocked = false,
+                lockReason = null,
+                feasibilityScorePct = 95,
                 isSweetSpot = false,
                 warnings = listOf(
-                    "Ships customer training data off-device (requires explicit user consent).",
-                    "LiteRT-LM: loraPath is immutable after session creation (adapter switching needs session restart)."
+                    "Requires user consent to transfer training data off-device.",
+                    "LiteRT-LM: loraPath is immutable after session creation."
                 ),
-                highlights = listOf("Works for standard HF models (Gemma-2 2B, Phi-2)", "Zero mobile GPU thermal strain"),
-                recipeSnippet = "ct.utils.MultiFunctionDescriptor + LiteRT-LM --lora_ckpt adapter.bin"
+                highlights = listOf(
+                    "Compatible with standard HF models (Gemma-2 2B, Phi-2)",
+                    "Safest option: preserves phone battery and prevents all thermal load"
+                ),
+                recipeSnippet = "python -m mediapipe.tasks.python.genai.converter --lora_ckpt adapter.bin --backend 'gpu'"
             )
         }
 
-        // Path A: BitNet On-Device LoRA (QVAC Fabric)
-        val benchmark = BenchmarkData.BENCHMARK_TABLE.firstOrNull { it.scale == modelScale }
-        val (timeStr, seconds, isOom) = when (chipset) {
-            TargetChipset.SAMSUNG_S25_ADRENO830 -> Triple(
-                benchmark?.s25Display ?: "N/A",
-                benchmark?.s25Seconds,
-                benchmark?.s25Oom ?: false
-            )
-            TargetChipset.PIXEL_9_MALI -> Triple(
-                benchmark?.pixel9Display ?: "N/A",
-                benchmark?.pixel9Seconds,
-                benchmark?.pixel9Oom ?: false
-            )
-            TargetChipset.IPHONE_16_A18 -> Triple(
-                benchmark?.iphone16Display ?: "N/A",
-                benchmark?.iphone16Seconds,
-                benchmark?.iphone16Oom ?: false
-            )
-        }
+        // Check if model fits in user's scanned hardware
+        val (canRun, lockReason) = deviceProfile.canRunModel(modelScale, quantFormat)
 
         val estimatedVram = when (quantFormat) {
             QuantFormat.TQ1_0 -> modelScale.tq1SizeGb + 0.6f
             QuantFormat.TQ2_0 -> modelScale.tq2SizeGb + 0.9f
         }
 
+        val seconds = if (canRun) deviceProfile.estimateSecondsForModel(modelScale) else null
+        val timeDisplay = if (canRun && seconds != null) {
+            if (seconds >= 3600) {
+                val h = seconds / 3600
+                val m = (seconds % 3600) / 60
+                "${h}h ${m}m"
+            } else {
+                val m = seconds / 60
+                val s = seconds % 60
+                "${m}m ${s}s"
+            }
+        } else {
+            "OOM (Cannot run)"
+        }
+
         val oomRisk = when {
-            isOom -> OomRisk.FATAL_OOM
-            modelScale == ModelScale.SCALE_7B -> OomRisk.HIGH_THERMAL_RISK
-            modelScale == ModelScale.SCALE_2_7B -> OomRisk.MANAGEABLE
+            !canRun -> OomRisk.FATAL_OOM
+            modelScale == ModelScale.SCALE_2_7B -> OomRisk.HIGH_THERMAL_RISK
+            modelScale == ModelScale.SCALE_1B -> if (deviceProfile.tier == DeviceTier.TIER_C) OomRisk.HIGH_THERMAL_RISK else OomRisk.SAFE
             else -> OomRisk.SAFE
         }
 
-        val feasibilityScore = when (oomRisk) {
-            OomRisk.SAFE -> 95
-            OomRisk.MANAGEABLE -> 72
-            OomRisk.HIGH_THERMAL_RISK -> 35
-            OomRisk.FATAL_OOM -> 0
+        val feasibilityScore = when {
+            !canRun -> 0
+            modelScale == ModelScale.SCALE_2_7B -> 45
+            modelScale == ModelScale.SCALE_1B -> 92
+            else -> 98
         }
+
+        val isSweet = modelScale == ModelScale.SCALE_1B && canRun && (deviceProfile.tier == DeviceTier.TIER_S || deviceProfile.tier == DeviceTier.TIER_A)
 
         val warnings = mutableListOf<String>()
         val highlights = mutableListOf<String>()
 
-        if (isOom) {
-            warnings.add("CRITICAL OOM: ${modelScale.label} exceeds physical unified memory on ${chipset.displayName}.")
-            warnings.add("Recommendation: Switch to ≤ 1B model or deploy via Path D (Off-device PEFT).")
+        if (!canRun) {
+            warnings.add("MEMORY LIMIT: $lockReason")
+            warnings.add("This model cannot be fine-tuned directly on ${deviceProfile.deviceModel}. Please choose a smaller model (≤ 1B) or use Path D (Cloud PEFT).")
         } else {
-            if (modelScale.sweetSpot) {
-                highlights.add("Sweet spot for handheld fine-tuning: practical epoch times under battery operation.")
+            if (isSweet) {
+                highlights.add("Best-Case Sweet Spot: Perfect balance of intelligence and battery efficiency for your hardware.")
             }
-            if (chipset == TargetChipset.SAMSUNG_S25_ADRENO830) {
-                highlights.add("Adreno 830 GPU achieves up to 11× speedup over CPU execution.")
-                highlights.add("Dynamic tiling is enabled by QVAC Fabric for peak memory bandwidth.")
-            } else if (chipset == TargetChipset.PIXEL_9_MALI) {
-                warnings.add("Mali-G715 GPU has higher latency than Adreno 830 (e.g. 1B model takes ~2h 08m vs 1h 18m).")
-            } else if (chipset == TargetChipset.IPHONE_16_A18) {
-                warnings.add("iOS suspends background GPU tasks — keep application foregrounded during active epochs.")
-            }
-
-            if (quantFormat == QuantFormat.TQ2_0) {
-                highlights.add("TQ2_0 chosen: High numerical stability for ternary gradient descent.")
+            if (deviceProfile.hasVulkanSupport) {
+                highlights.add("GPU acceleration active: Vulkan hardware backend will accelerate matrix operations.")
             } else {
-                highlights.add("TQ1_0 chosen: Minimum RAM footprint (~1.6 bits/weight).")
+                warnings.add("No Vulkan GPU detected: Training will fall back to CPU emulation (slower epoch times).")
+            }
+            if (quantFormat == QuantFormat.TQ2_0) {
+                highlights.add("TQ2_0 format: High numerical stability for gradient calculations.")
+            } else {
+                highlights.add("TQ1_0 format: Extreme ~1.6 bits/weight memory compression.")
             }
         }
 
@@ -152,14 +157,16 @@ object BackendSelectorEngine {
         """.trimIndent()
 
         return BackendRecommendation(
-            recommendedPath = if (isOom) TrainingPathId.PATH_D else TrainingPathId.PATH_A,
-            pathTitle = if (isOom) "Path D: Off-device PEFT (Fallback due to OOM)" else "Path A: BitNet On-Device LoRA",
-            timePerEpochDisplay = timeStr,
+            recommendedPath = if (!canRun) TrainingPathId.PATH_D else TrainingPathId.PATH_A,
+            pathTitle = if (!canRun) "Path D: Off-Device PEFT (Exceeds Device RAM)" else "Path A: BitNet On-Device LoRA",
+            timePerEpochDisplay = timeDisplay,
             timePerEpochSeconds = seconds,
             estimatedVramGb = estimatedVram,
             oomRisk = oomRisk,
+            isLocked = !canRun,
+            lockReason = lockReason,
             feasibilityScorePct = feasibilityScore,
-            isSweetSpot = modelScale.sweetSpot && !isOom,
+            isSweetSpot = isSweet,
             warnings = warnings,
             highlights = highlights,
             recipeSnippet = recipe

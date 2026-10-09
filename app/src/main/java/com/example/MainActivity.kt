@@ -6,32 +6,20 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Hub
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -42,41 +30,37 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.engine.FineTuningEngine
+import com.example.data.huggingface.HuggingFaceRepository
+import com.example.data.scanner.DeviceHardwareScanner
 import com.example.ui.components.TelemetryTopBar
 import com.example.ui.screens.BackendSelectorScreen
 import com.example.ui.screens.BenchmarkMatrixScreen
 import com.example.ui.screens.BitNetStudioScreen
+import com.example.ui.screens.HuggingFaceHubScreen
 import com.example.ui.screens.RecipesScreen
 import com.example.ui.theme.CyberBackground
-import com.example.ui.theme.CyberCardBorder
 import com.example.ui.theme.CyberDark
-import com.example.ui.theme.CyberSurface
-import com.example.ui.theme.CyberSurfaceVariant
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.NeonCyan
-import com.example.ui.theme.NeonCyanLight
-import com.example.ui.theme.TelemetryEmerald
 import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 
 enum class AppTab(val title: String, val icon: ImageVector, val tag: String) {
     SELECTOR("Selector", Icons.Default.Hub, "tab_selector"),
     STUDIO("BitNet Studio", Icons.Default.PlayCircleOutline, "tab_studio"),
+    HF_HUB("HF Hub", Icons.Default.CloudDownload, "tab_hf_hub"),
     MATRIX("Benchmarks", Icons.Default.TableChart, "tab_matrix"),
     RECIPES("Recipes", Icons.Default.Code, "tab_recipes")
 }
@@ -87,9 +71,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
+                val context = LocalContext.current
                 val coroutineScope = rememberCoroutineScope()
                 val engine = remember { FineTuningEngine(applicationContext, coroutineScope) }
+                val hfRepository = remember { HuggingFaceRepository() }
                 val sessionState by engine.sessionState.collectAsState()
+
+                var deviceProfile by remember {
+                    mutableStateOf(DeviceHardwareScanner.scan(context))
+                }
 
                 var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -107,7 +97,9 @@ class MainActivity : ComponentActivity() {
                                 batteryPct = sessionState.batteryPct,
                                 isCharging = sessionState.isCharging,
                                 thermalTempC = sessionState.thermalTempC,
-                                status = sessionState.status
+                                status = sessionState.status,
+                                deviceDisplayName = deviceProfile.deviceModel,
+                                tierLabel = deviceProfile.tier.badgeLabel
                             )
                         }
                     },
@@ -126,14 +118,30 @@ class MainActivity : ComponentActivity() {
                     ) {
                         when (selectedTab) {
                             0 -> BackendSelectorScreen(
+                                deviceProfile = deviceProfile,
+                                onRescanRequested = {
+                                    deviceProfile = DeviceHardwareScanner.scan(context)
+                                },
                                 onNavigateToStudioWithConfig = { config ->
                                     engine.updateHyperparams(config)
-                                    selectedTab = 1 // Switch to Studio
+                                    selectedTab = 1
                                 }
                             )
                             1 -> BitNetStudioScreen(engine = engine)
-                            2 -> BenchmarkMatrixScreen()
-                            3 -> RecipesScreen()
+                            2 -> HuggingFaceHubScreen(
+                                repository = hfRepository,
+                                deviceProfile = deviceProfile,
+                                onModelSelected = { model ->
+                                    engine.loadHuggingFaceModel(model)
+                                    selectedTab = 1 // Switch to Studio with model loaded
+                                },
+                                onDatasetSelected = { dataset ->
+                                    engine.loadHuggingFaceDataset(dataset)
+                                    selectedTab = 1 // Switch to Studio with dataset loaded
+                                }
+                            )
+                            3 -> BenchmarkMatrixScreen(deviceProfile = deviceProfile)
+                            4 -> RecipesScreen()
                         }
                     }
                 }
@@ -170,7 +178,7 @@ fun OnDeviceMLNavBar(
                 label = {
                     Text(
                         text = tab.title,
-                        fontSize = 10.sp,
+                        fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                     )

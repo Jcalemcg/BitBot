@@ -3,7 +3,6 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,14 +22,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -51,8 +51,10 @@ import com.example.data.engine.OomRisk
 import com.example.data.model.LoRAHyperparams
 import com.example.data.model.ModelScale
 import com.example.data.model.QuantFormat
-import com.example.data.model.TargetChipset
+import com.example.data.scanner.DeviceHardwareProfile
+import com.example.data.scanner.DeviceTier
 import com.example.ui.components.CodeSnippetCard
+import com.example.ui.components.InlineExplainToggle
 import com.example.ui.theme.AlertCrimson
 import com.example.ui.theme.CyberBackground
 import com.example.ui.theme.CyberCardBorder
@@ -70,19 +72,20 @@ import com.example.ui.theme.WarningAmber
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun BackendSelectorScreen(
+    deviceProfile: DeviceHardwareProfile,
+    onRescanRequested: () -> Unit,
     onNavigateToStudioWithConfig: (LoRAHyperparams) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var selectedScale by remember { mutableStateOf(ModelScale.SCALE_1B) }
     var selectedQuant by remember { mutableStateOf(QuantFormat.TQ2_0) }
-    var selectedChipset by remember { mutableStateOf(TargetChipset.SAMSUNG_S25_ADRENO830) }
     var isClassifierMode by remember { mutableStateOf(false) }
 
-    val recommendation = remember(selectedScale, selectedQuant, selectedChipset, isClassifierMode) {
+    val recommendation = remember(selectedScale, selectedQuant, deviceProfile, isClassifierMode) {
         BackendSelectorEngine.evaluate(
             modelScale = selectedScale,
             quantFormat = selectedQuant,
-            chipset = selectedChipset,
+            deviceProfile = deviceProfile,
             isCustomClassifier = isClassifierMode
         )
     }
@@ -96,7 +99,7 @@ fun BackendSelectorScreen(
     ) {
         // Section Header
         Text(
-            text = "HARDWARE & BACKEND SELECTOR",
+            text = "HARDWARE SCAN & BACKEND SELECTOR",
             fontSize = 12.sp,
             fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
@@ -104,13 +107,150 @@ fun BackendSelectorScreen(
             letterSpacing = 1.2.sp
         )
         Text(
-            text = "Evaluate model class, parameters, and memory feasibility against verified mobile chipsets.",
-            fontSize = 13.sp,
+            text = "Dynamically audited against your phone's live physical RAM, GPU drivers, and thermal state.",
+            fontSize = 12.sp,
             color = TextSecondary,
-            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
         )
 
-        // 1. Workload Type Selector
+        // 1. DEVICE HARDWARE AUDIT CARD (SCANNED LIVE)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(CyberSurface)
+                .border(1.dp, NeonCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "SCANNED DEVICE PROFILE",
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = TextMuted,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "${deviceProfile.manufacturer} ${deviceProfile.deviceModel}",
+                        fontSize = 15.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            when (deviceProfile.tier) {
+                                DeviceTier.TIER_S, DeviceTier.TIER_A -> TelemetryEmerald.copy(alpha = 0.2f)
+                                DeviceTier.TIER_B -> WarningAmber.copy(alpha = 0.2f)
+                                DeviceTier.TIER_C -> AlertCrimson.copy(alpha = 0.2f)
+                            }
+                        )
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = deviceProfile.tier.badgeLabel,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = when (deviceProfile.tier) {
+                            DeviceTier.TIER_S, DeviceTier.TIER_A -> TelemetryEmerald
+                            DeviceTier.TIER_B -> WarningAmber
+                            DeviceTier.TIER_C -> AlertCrimson
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = deviceProfile.tier.description,
+                fontSize = 11.sp,
+                color = TextSecondary,
+                lineHeight = 15.sp
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 4 Pass/Fail Badges
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                deviceProfile.checkBadges.forEach { badge ->
+                    Row(
+                        modifier = Modifier
+                            .background(
+                                if (badge.passed) TelemetryEmerald.copy(alpha = 0.1f) else AlertCrimson.copy(alpha = 0.1f),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .border(
+                                1.dp,
+                                if (badge.passed) TelemetryEmerald.copy(alpha = 0.4f) else AlertCrimson.copy(alpha = 0.4f),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (badge.passed) "✓ PASS: " else "✕ FAIL: ",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = if (badge.passed) TelemetryEmerald else AlertCrimson
+                        )
+                        Text(
+                            text = "${badge.title} (${badge.detail})",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextPrimary
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Rescan button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                OutlinedButton(
+                    onClick = onRescanRequested,
+                    shape = RoundedCornerShape(6.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = NeonCyan)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "RE-SCAN LIVE MEMORY",
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // 2. Workload Type Selector
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -157,7 +297,7 @@ fun BackendSelectorScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "Classifier ≤ 1M (Path B/C)",
+                    text = "Classifier ≤ 1M (Path B)",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
@@ -168,15 +308,21 @@ fun BackendSelectorScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // 2. Model Scale (if LLM mode)
+        // 3. Model Scale (with DYNAMIC GATING & LOCK BADGES)
         if (!isClassifierMode) {
-            Text(
-                text = "SELECT MODEL SCALE:",
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = TextSecondary
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SELECT MODEL SCALE (DYNAMICALLY GATED):",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    color = TextSecondary
+                )
+            }
             Spacer(modifier = Modifier.height(8.dp))
 
             FlowRow(
@@ -185,28 +331,54 @@ fun BackendSelectorScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 ModelScale.entries.forEach { scale ->
+                    val (canRun, lockReason) = deviceProfile.canRunModel(scale, selectedQuant)
                     val isSelected = selectedScale == scale
-                    val isSweetSpot = scale.sweetSpot
+                    val isSweetSpot = scale == ModelScale.SCALE_1B && canRun
+
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSelected) CyberSurfaceVariant else CyberSurface)
+                            .background(
+                                when {
+                                    !canRun -> CyberDark
+                                    isSelected -> CyberSurfaceVariant
+                                    else -> CyberSurface
+                                }
+                            )
                             .border(
                                 1.5.dp,
-                                if (isSelected) NeonCyan else CyberCardBorder,
+                                when {
+                                    isSelected && !canRun -> AlertCrimson
+                                    isSelected -> NeonCyan
+                                    !canRun -> AlertCrimson.copy(alpha = 0.35f)
+                                    else -> CyberCardBorder
+                                },
                                 RoundedCornerShape(8.dp)
                             )
                             .clickable { selectedScale = scale }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                             .testTag("scale_chip_${scale.label}")
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (!canRun) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Locked: Exceeds RAM",
+                                    tint = AlertCrimson,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
                             Text(
                                 text = scale.label,
                                 fontSize = 13.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isSelected) TextPrimary else TextSecondary
+                                color = when {
+                                    !canRun -> AlertCrimson.copy(alpha = 0.7f)
+                                    isSelected -> TextPrimary
+                                    else -> TextSecondary
+                                }
                             )
                             if (isSweetSpot) {
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -221,6 +393,11 @@ fun BackendSelectorScreen(
                 }
             }
 
+            InlineExplainToggle(
+                conceptKey = "MODEL_SCALE",
+                modifier = Modifier.padding(top = 6.dp)
+            )
+
             Spacer(modifier = Modifier.height(14.dp))
 
             // Quantization Format Selector
@@ -231,7 +408,10 @@ fun BackendSelectorScreen(
                 fontWeight = FontWeight.Bold,
                 color = TextSecondary
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            InlineExplainToggle(
+                conceptKey = "QUANT_FORMAT",
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -272,68 +452,9 @@ fun BackendSelectorScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // 3. Target Chipset Selector
-        Text(
-            text = "TARGET HARDWARE PROFILE:",
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            TargetChipset.entries.forEach { chipset ->
-                val isSelected = selectedChipset == chipset
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isSelected) CyberSurfaceVariant else CyberSurface)
-                        .border(
-                            1.dp,
-                            if (isSelected) NeonCyan else CyberCardBorder,
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable { selectedChipset = chipset }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            text = chipset.displayName,
-                            fontSize = 13.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isSelected) TextPrimary else TextSecondary
-                        )
-                        Text(
-                            text = "${chipset.gpuName} · ${chipset.platform}",
-                            fontSize = 11.sp,
-                            color = TextMuted
-                        )
-                    }
-
-                    if (isSelected) {
-                        Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Selected",
-                            tint = NeonCyan,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
-
         Spacer(modifier = Modifier.height(20.dp))
 
-        // 4. Recommendation Result Card
+        // 4. Recommendation Result Card (Calibrated to this device)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -357,8 +478,8 @@ fun BackendSelectorScreen(
             ) {
                 Column {
                     Text(
-                        text = "RECOMMENDED DISPATCH",
-                        fontSize = 11.sp,
+                        text = "RECOMMENDED FOR ${deviceProfile.deviceModel.uppercase()}",
+                        fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         color = TextMuted,
                         letterSpacing = 1.sp
@@ -379,27 +500,26 @@ fun BackendSelectorScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(
-                            when (recommendation.oomRisk) {
-                                OomRisk.FATAL_OOM -> AlertCrimson.copy(alpha = 0.2f)
-                                OomRisk.HIGH_THERMAL_RISK -> WarningAmber.copy(alpha = 0.2f)
+                            when {
+                                recommendation.isLocked -> AlertCrimson.copy(alpha = 0.2f)
+                                recommendation.oomRisk == OomRisk.HIGH_THERMAL_RISK -> WarningAmber.copy(alpha = 0.2f)
                                 else -> TelemetryEmerald.copy(alpha = 0.2f)
                             }
                         )
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = when (recommendation.oomRisk) {
-                            OomRisk.FATAL_OOM -> "OOM BLOCK"
-                            OomRisk.HIGH_THERMAL_RISK -> "THERMAL RISK"
-                            OomRisk.MANAGEABLE -> "HIGH LOAD"
-                            OomRisk.SAFE -> "SWEET SPOT"
+                        text = when {
+                            recommendation.isLocked -> "LOCKED (RAM)"
+                            recommendation.oomRisk == OomRisk.HIGH_THERMAL_RISK -> "HEAVY LOAD"
+                            else -> "READY TO RUN"
                         },
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
-                        color = when (recommendation.oomRisk) {
-                            OomRisk.FATAL_OOM -> AlertCrimson
-                            OomRisk.HIGH_THERMAL_RISK -> WarningAmber
+                        color = when {
+                            recommendation.isLocked -> AlertCrimson
+                            recommendation.oomRisk == OomRisk.HIGH_THERMAL_RISK -> WarningAmber
                             else -> TelemetryEmerald
                         }
                     )
@@ -421,7 +541,7 @@ fun BackendSelectorScreen(
                 ) {
                     Column {
                         Text(
-                            text = "TIME / EPOCH",
+                            text = "EST. TIME / EPOCH",
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             color = TextMuted
@@ -431,7 +551,7 @@ fun BackendSelectorScreen(
                             fontSize = 16.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = if (recommendation.oomRisk == OomRisk.FATAL_OOM) AlertCrimson else TextPrimary
+                            color = if (recommendation.isLocked) AlertCrimson else TextPrimary
                         )
                     }
                 }
@@ -444,17 +564,17 @@ fun BackendSelectorScreen(
                 ) {
                     Column {
                         Text(
-                            text = "EST. VRAM FOOTPRINT",
+                            text = "RAM NEEDED / AVAIL",
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             color = TextMuted
                         )
                         Text(
-                            text = "%.2f GB".format(recommendation.estimatedVramGb),
+                            text = "%.1f GB / %.1f GB".format(recommendation.estimatedVramGb, deviceProfile.availableRamGb),
                             fontSize = 16.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            color = TextPrimary
+                            color = if (recommendation.isLocked) AlertCrimson else TextPrimary
                         )
                     }
                 }
@@ -469,7 +589,7 @@ fun BackendSelectorScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Hardware Feasibility Score:",
+                    text = "Hardware Feasibility on Your Phone:",
                     fontSize = 11.sp,
                     color = TextSecondary
                 )
@@ -500,7 +620,7 @@ fun BackendSelectorScreen(
                 trackColor = CyberDark
             )
 
-            // Warnings
+            // Warnings / Lock Explanation
             if (recommendation.warnings.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 recommendation.warnings.forEach { warning ->
@@ -560,7 +680,7 @@ fun BackendSelectorScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Action Button: Open in Studio
+            // Action Button: Open in Studio or Disabled
             Button(
                 onClick = {
                     onNavigateToStudioWithConfig(
@@ -570,7 +690,7 @@ fun BackendSelectorScreen(
                         )
                     )
                 },
-                enabled = recommendation.oomRisk != OomRisk.FATAL_OOM,
+                enabled = !recommendation.isLocked,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("launch_training_studio_button"),
@@ -583,13 +703,13 @@ fun BackendSelectorScreen(
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.PlayArrow,
+                    imageVector = if (recommendation.isLocked) Icons.Default.Lock else Icons.Default.PlayArrow,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = if (recommendation.oomRisk == OomRisk.FATAL_OOM) "CANNOT DISPATCH (OOM)" else "CONFIGURE IN BITNET STUDIO",
+                    text = if (recommendation.isLocked) "LOCKED (EXCEEDS DEVICE RAM)" else "CONFIGURE IN BITNET STUDIO",
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold
@@ -602,7 +722,7 @@ fun BackendSelectorScreen(
         // Command Snippet
         CodeSnippetCard(
             title = "CLI DISPATCH SYNTAX",
-            subtitle = "Direct llama-finetune-lora parameters",
+            subtitle = "Customized for ${deviceProfile.deviceModel}",
             code = recommendation.recipeSnippet
         )
 

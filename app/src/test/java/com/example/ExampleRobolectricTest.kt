@@ -7,10 +7,13 @@ import com.example.data.engine.DatasetValidator
 import com.example.data.engine.OomRisk
 import com.example.data.model.ModelScale
 import com.example.data.model.QuantFormat
-import com.example.data.model.TargetChipset
 import com.example.data.model.TrainingPathId
+import com.example.data.scanner.DeviceHardwareProfile
+import com.example.data.scanner.DeviceHardwareScanner
+import com.example.data.scanner.DeviceTier
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,25 +32,66 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `backend selector evaluates sweet spot for 1B model on Galaxy S25`() {
+  fun `device hardware scanner executes and detects memory`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val profile = DeviceHardwareScanner.scan(context)
+    assertNotNull(profile)
+    assertTrue(profile.totalRamGb > 0f)
+    assertTrue(profile.cpuCores >= 1)
+    assertNotNull(profile.tier)
+    assertEquals(4, profile.checkBadges.size)
+  }
+
+  @Test
+  fun `backend selector evaluates sweet spot on flagship device profile`() {
+    val flagshipProfile = DeviceHardwareProfile(
+      deviceModel = "Test Flagship",
+      manufacturer = "TestBrand",
+      hardwareName = "flagship_chip",
+      totalRamGb = 12.0f,
+      availableRamGb = 8.5f,
+      cpuCores = 8,
+      hasVulkanSupport = true,
+      batteryPct = 90,
+      isCharging = false,
+      tier = DeviceTier.TIER_S,
+      checkBadges = emptyList()
+    )
+
     val rec = BackendSelectorEngine.evaluate(
       modelScale = ModelScale.SCALE_1B,
       quantFormat = QuantFormat.TQ2_0,
-      chipset = TargetChipset.SAMSUNG_S25_ADRENO830
+      deviceProfile = flagshipProfile
     )
     assertEquals(TrainingPathId.PATH_A, rec.recommendedPath)
-    assertEquals("1h 18m", rec.timePerEpochDisplay)
+    assertFalse(rec.isLocked)
     assertTrue(rec.isSweetSpot)
     assertEquals(OomRisk.SAFE, rec.oomRisk)
   }
 
   @Test
-  fun `backend selector detects OOM for 7B on Galaxy S25`() {
+  fun `backend selector locks 7B model due to memory shortfall on constrained device`() {
+    val constrainedProfile = DeviceHardwareProfile(
+      deviceModel = "Constrained Device",
+      manufacturer = "Budget",
+      hardwareName = "low_end_chip",
+      totalRamGb = 3.8f,
+      availableRamGb = 1.2f,
+      cpuCores = 4,
+      hasVulkanSupport = false,
+      batteryPct = 50,
+      isCharging = false,
+      tier = DeviceTier.TIER_C,
+      checkBadges = emptyList()
+    )
+
     val rec = BackendSelectorEngine.evaluate(
       modelScale = ModelScale.SCALE_7B,
       quantFormat = QuantFormat.TQ2_0,
-      chipset = TargetChipset.SAMSUNG_S25_ADRENO830
+      deviceProfile = constrainedProfile
     )
+    assertTrue(rec.isLocked)
+    assertNotNull(rec.lockReason)
     assertEquals(OomRisk.FATAL_OOM, rec.oomRisk)
     assertEquals(TrainingPathId.PATH_D, rec.recommendedPath)
     assertEquals(0, rec.feasibilityScorePct)
